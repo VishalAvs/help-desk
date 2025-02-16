@@ -17,7 +17,8 @@ public class SecurityConfig {
         http
                 .securityMatcher("/**")  // Match all incoming requests
                 .authorizeHttpRequests(authz -> authz
-                        .requestMatchers(HttpMethod.POST, "/api/auth/signup").permitAll()  // Allow signup without authentication
+                        .requestMatchers(HttpMethod.POST, "/api/auth/signup").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()// Allow signup without authentication
                         .anyRequest().authenticated())  // Any other request requires authentication
                 .csrf(csrf -> csrf.disable());  // Disabling CSRF protection explicitly
 

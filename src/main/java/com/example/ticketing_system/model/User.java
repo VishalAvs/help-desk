@@ -1,4 +1,4 @@
-package com.example.helpdesk.model;
+package com.example.ticketing_system.model;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -11,11 +11,11 @@ public class User {
     private String name;
     private String email;
     private String password;
-    private String role; // customer or agent
+    private Role role; // Enum role
 
     public User() {}
 
-    public User(String name, String email, String password, String role) {
+    public User(String name, String email, String password, Role role) {
         this.name = name;
         this.email = email;
         this.password = password;
@@ -30,6 +30,11 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
-    public String getRole() { return role; }
-    public void setRole(String role) { this.role = role; }
+    public Role getRole() { return role; }
+    public void setRole(Role role) { this.role = role; }
+
+    public enum Role {
+        CUSTOMER,
+        AGENT
+    }
 }

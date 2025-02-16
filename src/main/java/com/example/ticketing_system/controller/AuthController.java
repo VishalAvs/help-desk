@@ -41,7 +41,7 @@ public class AuthController {
                 .build();
     }
 
-    // 🟢 Signup with AWS Cognito
+    //Signup with AWS Cognito
     @PostMapping("/signup")
     public ResponseEntity<String> signUp(@RequestBody SignUpRequestDto signUpRequestDto) {
         try {
@@ -67,7 +67,7 @@ public class AuthController {
         }
     }
 
-    // 🟢 Login with AWS Cognito
+    //Login with AWS Cognito
     @PostMapping("/login")
     public ResponseEntity<String> login(@RequestBody LoginRequestDto loginRequestDto) {
         try {

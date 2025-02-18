@@ -2,6 +2,7 @@ package com.example.ticketing_system.controller;
 
 import com.example.ticketing_system.dto.LoginRequestDto;
 import com.example.ticketing_system.dto.SignUpRequestDto;
+import com.example.ticketing_system.service.EmailService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,14 +17,16 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.util.Base64;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
-
     private final CognitoIdentityProviderClient cognitoClient;
+    private final EmailService emailService;
+    private final Map<String, String> otpStorage = new ConcurrentHashMap<>();
 
     @Value("${aws.cognito.userPoolId}")
     private String userPoolId;
@@ -34,87 +37,95 @@ public class AuthController {
     @Value("${aws.cognito.clientSecret}")
     private String clientSecret;
 
-    public AuthController() {
+    public AuthController(EmailService emailService) {
+        this.emailService = emailService;
         this.cognitoClient = CognitoIdentityProviderClient.builder()
                 .region(Region.of("ap-southeast-2"))
                 .credentialsProvider(DefaultCredentialsProvider.create())
                 .build();
     }
 
-    //Signup with AWS Cognito
     @PostMapping("/signup")
     public ResponseEntity<String> signUp(@RequestBody SignUpRequestDto signUpRequestDto) {
-        try {
-            logger.info("Signup attempt for: {}", signUpRequestDto.getEmail()); // Log attempt
+        logger.info("Signup attempt for: {}", signUpRequestDto.getEmail());
 
-            // Prepare request for Cognito SignUp
+        try {
+            // Register user in Cognito (unconfirmed)
             SignUpRequest request = SignUpRequest.builder()
                     .clientId(clientId)
                     .username(signUpRequestDto.getEmail())
                     .password(signUpRequestDto.getPassword())
                     .userAttributes(AttributeType.builder().name("email").value(signUpRequestDto.getEmail()).build())
-                    .secretHash(getSecretHash(signUpRequestDto.getEmail())) // Generate SECRET_HASH and log it
+                    .secretHash(getSecretHash(signUpRequestDto.getEmail()))
                     .build();
-
-            logger.debug("SignUpRequest prepared: {}", request); // Log request details
 
             cognitoClient.signUp(request);
-            logger.info("User registered successfully: {}", signUpRequestDto.getEmail()); // Log success
-            return ResponseEntity.ok("User registered successfully!");
+
+            // Send OTP via SES
+            String otp = emailService.sendVerificationEmail(signUpRequestDto.getEmail());
+            otpStorage.put(signUpRequestDto.getEmail(), otp);
+
+            logger.info("User {} registered successfully. OTP sent to email.", signUpRequestDto.getEmail());
+            return ResponseEntity.ok("User registered. Please verify your email with the OTP sent to you.");
         } catch (CognitoIdentityProviderException e) {
-            logger.error("Error during signup for {}: {}", signUpRequestDto.getEmail(), e.awsErrorDetails().errorMessage()); // Log error
-            return ResponseEntity.badRequest().body("Error: " + e.awsErrorDetails().errorMessage());
+            logger.error("Error during signup for {}: {}", signUpRequestDto.getEmail(), e.awsErrorDetails().errorMessage(), e);
+            return ResponseEntity.badRequest().body("Error during signup: " + e.awsErrorDetails().errorMessage());
+        } catch (Exception e) {
+            logger.error("Unexpected error during signup for {}: {}", signUpRequestDto.getEmail(), e.getMessage(), e);
+            return ResponseEntity.status(500).body("Unexpected error occurred: " + e.getMessage());
         }
     }
 
-    //Login with AWS Cognito
-    @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestBody LoginRequestDto loginRequestDto) {
+    @PostMapping("/verify")
+    public ResponseEntity<String> verifyUser(@RequestBody Map<String, String> request) {
+        String email = request.get("email");
+        String otp = request.get("otp");
+
+        logger.info("OTP verification attempt for: {}", email);
+
+        if (!otpStorage.containsKey(email)) {
+            logger.warn("Invalid OTP or OTP expired for email: {}", email);
+            return ResponseEntity.badRequest().body("Invalid email or OTP expired.");
+        }
+
+        if (!otpStorage.get(email).equals(otp)) {
+            logger.warn("Invalid OTP for email: {}", email);
+            return ResponseEntity.status(401).body("Invalid OTP.");
+        }
+
+        // Confirm user in Cognito
         try {
-            logger.info("Login attempt for: {}", loginRequestDto.getEmail()); // Log attempt
-
-            String secretHash = getSecretHash(loginRequestDto.getEmail());
-            logger.debug("Generated SECRET_HASH login: {}", secretHash); // Log generated SECRET_HASH
-
-            // Prepare request for Cognito Login
-            InitiateAuthRequest authRequest = InitiateAuthRequest.builder()
-                    .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
-                    .clientId(clientId)
-                    .authParameters(Map.of(
-                            "USERNAME", loginRequestDto.getEmail(),
-                            "PASSWORD", loginRequestDto.getPassword(),
-                            "SECRET_HASH", secretHash)) // Include secretHash
+            AdminConfirmSignUpRequest confirmRequest = AdminConfirmSignUpRequest.builder()
+                    .userPoolId(userPoolId)
+                    .username(email)
                     .build();
 
-            logger.debug("InitiateAuthRequest prepared: {}", authRequest); // Log the details of the request
+            cognitoClient.adminConfirmSignUp(confirmRequest);
+            otpStorage.remove(email);
 
-            InitiateAuthResponse authResponse = cognitoClient.initiateAuth(authRequest);
-            logger.info("Login successful for {}. ID Token: {}", loginRequestDto.getEmail(), authResponse.authenticationResult().idToken()); // Log success
-
-            return ResponseEntity.ok("Login successful! Token: " + authResponse.authenticationResult().idToken());
+            logger.info("User {} successfully verified.", email);
+            return ResponseEntity.ok("User verified successfully.");
         } catch (CognitoIdentityProviderException e) {
-            logger.error("Login failed for {}: {}", loginRequestDto.getEmail(), e.awsErrorDetails().errorMessage()); // Log error
-            return ResponseEntity.status(401).body("Invalid credentials: " + e.awsErrorDetails().errorMessage());
+            logger.error("Error confirming user {}: {}", email, e.awsErrorDetails().errorMessage(), e);
+            return ResponseEntity.badRequest().body("Error during verification: " + e.awsErrorDetails().errorMessage());
+        } catch (Exception e) {
+            logger.error("Unexpected error during verification for {}: {}", email, e.getMessage(), e);
+            return ResponseEntity.status(500).body("Unexpected error occurred during verification: " + e.getMessage());
         }
     }
+
 
     private String getSecretHash(String username) {
         try {
-            logger.debug("Generating SECRET_HASH for username: {}", username); // Log username
-
             String data = username + clientId;
-            logger.debug("Data to sign (username + clientId): {}", data); // Log the data being used for hash generation
-
             SecretKeySpec signingKey = new SecretKeySpec(clientSecret.getBytes(), "HmacSHA256");
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(signingKey);
             byte[] rawHmac = mac.doFinal(data.getBytes());
 
-            String secretHash = Base64.getEncoder().encodeToString(rawHmac);
-            logger.debug("Generated SECRET_HASH: {}", secretHash); // Log the secret hash
-            return secretHash;
+            return Base64.getEncoder().encodeToString(rawHmac);
         } catch (Exception e) {
-            logger.error("Error while generating SECRET_HASH for username: {}", username, e); // Log error during hash generation
+            logger.error("Error generating SECRET_HASH for username {}: {}", username, e.getMessage(), e);
             throw new RuntimeException("Error while generating SECRET_HASH", e);
         }
     }

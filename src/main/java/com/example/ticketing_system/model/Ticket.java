@@ -16,6 +16,7 @@ public class Ticket {
     private String createdBy; // User ID or email
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String imageUrl;  // Added field for storing S3 file URL or key
 
     // Constructors
     public Ticket() {
@@ -23,15 +24,17 @@ public class Ticket {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public Ticket(String title, String description, String createdBy, String status) {
+    public Ticket(String title, String description, String createdBy, String status, String imageUrl) {
         this.title = title;
         this.description = description;
         this.status = status;
         this.createdBy = createdBy;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+        this.imageUrl = imageUrl; // Initialize imageUrl
     }
 
+    // Getters and Setters
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -52,4 +55,7 @@ public class Ticket {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getImageUrl() { return imageUrl; }  // Getter for imageUrl
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }  // Setter for imageUrl
 }

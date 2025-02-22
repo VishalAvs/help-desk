@@ -16,6 +16,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/signup").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/verify").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/tickets/**").permitAll()   // Allow GET requests
+                        .requestMatchers(HttpMethod.POST, "/api/tickets").permitAll()     // Allow creating tickets
                         .anyRequest().authenticated()
                 )
                 .csrf(csrf -> csrf.disable());

@@ -2,6 +2,8 @@ package com.example.ticketing_system.controller;
 
 import com.example.ticketing_system.dto.LoginRequestDto;
 import com.example.ticketing_system.dto.SignUpRequestDto;
+import com.example.ticketing_system.model.User;
+import com.example.ticketing_system.repo.UserRepository;
 import com.example.ticketing_system.service.EmailService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +29,7 @@ public class AuthController {
     private final CognitoIdentityProviderClient cognitoClient;
     private final EmailService emailService;
     private final Map<String, String> otpStorage = new ConcurrentHashMap<>();
+    private final UserRepository userRepository;
 
     @Value("${aws.cognito.userPoolId}")
     private String userPoolId;
@@ -37,8 +40,9 @@ public class AuthController {
     @Value("${aws.cognito.clientSecret}")
     private String clientSecret;
 
-    public AuthController(EmailService emailService) {
+    public AuthController(EmailService emailService, UserRepository userRepository) {
         this.emailService = emailService;
+        this.userRepository = userRepository;
         this.cognitoClient = CognitoIdentityProviderClient.builder()
                 .region(Region.of("ap-southeast-2"))
                 .credentialsProvider(DefaultCredentialsProvider.create())
@@ -60,6 +64,14 @@ public class AuthController {
                     .build();
 
             cognitoClient.signUp(request);
+
+            User user = new User();
+//            user.setName(signUpRequestDto.getName()); // Assuming SignUpRequestDto has getName()
+            user.setEmail(signUpRequestDto.getEmail());
+            user.setPassword(signUpRequestDto.getPassword()); // Store encrypted in real scenarios
+            user.setRole(User.Role.CUSTOMER); // Default role, you can customize this
+
+            userRepository.save(user);
 
             // Send OTP via SES
             String otp = emailService.sendVerificationEmail(signUpRequestDto.getEmail());
@@ -111,6 +123,54 @@ public class AuthController {
         } catch (Exception e) {
             logger.error("Unexpected error during verification for {}: {}", email, e.getMessage(), e);
             return ResponseEntity.status(500).body("Unexpected error occurred during verification: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<String> signIn(@RequestBody LoginRequestDto loginRequestDto) {
+        logger.info("Signin attempt for email: {}", loginRequestDto.getEmail());
+
+        try {
+            // Log the client ID and the provided username
+            logger.debug("Using client ID: {}", clientId);
+
+            // Generate SECRET_HASH only if the client has a secret
+            String secretHash = clientSecret != null && !clientSecret.isEmpty() ? getSecretHash(loginRequestDto.getEmail()) : null;
+            if (secretHash != null) {
+                logger.debug("Generated SECRET_HASH for email: {}", loginRequestDto.getEmail());
+            }
+
+            // Log the request parameters for debugging
+            logger.debug("Auth Parameters: USERNAME={}, PASSWORD={}", loginRequestDto.getEmail(), loginRequestDto.getPassword());
+
+            // Authentication request to Cognito
+            InitiateAuthRequest authRequest = InitiateAuthRequest.builder()
+                    .clientId(clientId) // Only use the clientId here
+                    .authFlow(AuthFlowType.USER_PASSWORD_AUTH)  // The correct flow for regular user authentication
+                    .authParameters(Map.of(
+                            "USERNAME", loginRequestDto.getEmail(),
+                            "PASSWORD", loginRequestDto.getPassword(),
+                            "SECRET_HASH", secretHash != null ? secretHash : ""
+                    ))
+                    .build();
+
+            logger.debug("Calling Cognito InitiateAuth with parameters: {}", authRequest);
+
+            InitiateAuthResponse authResponse = cognitoClient.initiateAuth(authRequest); // Use initiateAuth here
+
+            // Generate ID Token (Access Token could also be used)
+            String idToken = authResponse.authenticationResult().idToken();  // Get ID Token or access token
+            logger.info("Signin successful for email: {}. ID Token: {}", loginRequestDto.getEmail(), idToken);
+
+            return ResponseEntity.ok("Signin successful, Token: " + idToken);
+        } catch (CognitoIdentityProviderException e) {
+            // Log the error details from Cognito
+            logger.error("Error during signin for email: {}: {} - {}", loginRequestDto.getEmail(), e.awsErrorDetails().errorCode(), e.awsErrorDetails().errorMessage());
+            return ResponseEntity.badRequest().body("Error during signin: " + e.awsErrorDetails().errorMessage());
+        } catch (Exception e) {
+            // Log any other unexpected errors
+            logger.error("Unexpected error during signin for email: {}: {}", loginRequestDto.getEmail(), e.getMessage(), e);
+            return ResponseEntity.status(500).body("Unexpected error occurred during signin: " + e.getMessage());
         }
     }
 
